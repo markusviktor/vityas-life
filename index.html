@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vitya's Life</title>
+  <style>
+    body {
+      margin: 0;
+      background: #222;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: sans-serif;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    const TILE_SIZE = 40;
+    const WIDTH = 800;
+    const HEIGHT = 600;
+
+    const BLACK = "#000000";
+    const WHITE = "#ffffff";
+    const BLUE  = "#4169E1";
+
+    const canvas = document.getElementById("gameCanvas");
+    canvas.width  = WIDTH;
+    canvas.height = HEIGHT;
+    const ctx = canvas.getContext("2d");
+
+    // ── Audio ────────────────────────────────────────────────────────────────
+    const bgMusic = new Audio("assets/sounds/background.mp3");
+    bgMusic.loop = true;
+    // Browsers require a user gesture before playing audio; start on first
+    // keydown or click.
+    let audioStarted = false;
+    function startAudio() {
+      if (!audioStarted) {
+        bgMusic.play().catch(() => {});
+        audioStarted = true;
+      }
+    }
+    document.addEventListener("keydown", startAudio);
+    document.addEventListener("click",   startAudio);
+
+    // ── Image cache ──────────────────────────────────────────────────────────
+    const images = {};
+    let imagesLoaded = 0;
+    const imageFiles = {
+      box:          "assets/images/box.png",
+      player_down:  "assets/images/player/player_down.png",
+      player_up:    "assets/images/player/player_up.png",
+      player_left:  "assets/images/player/player_left.png",
+      player_right: "assets/images/player/player_right.png",
+    };
+    const totalImages = Object.keys(imageFiles).length;
+
+    function loadImages(callback) {
+      for (const [key, src] of Object.entries(imageFiles)) {
+        const img = new Image();
+        img.src = src;
+        img.onload = () => {
+          imagesLoaded++;
+          if (imagesLoaded === totalImages) callback();
+        };
+        img.onerror = () => {
+          console.error(`Failed to load image: ${src}`);
+          imagesLoaded++;
+          if (imagesLoaded === totalImages) callback();
+        };
+        images[key] = img;
+      }
+    }
+
+    // ── Game class ───────────────────────────────────────────────────────────
+    class Game {
+      constructor() {
+        this.level = [
+          "####################",
+          "#                  #",
+          "#                  #",
+          "#        ##        #",
+          "#        ##        #",
+          "#        ##        #",
+          "#        ##        #",
+          "#        ##        #",
+          "#        ##        #",
+          "#        ##        #",
+          "#        ##        #",
+          "#        ##        #",
+          "#                  #",
+          "#                  #",
+          "####################",
+        ];
+
+        const names = ["AUTH", "SCHED", "DOC", "FEE", "NOTI", "SD"];
+        this.boxes   = [];
+        this.targets = [];
+        this.playerDirection = "down";
+        this.generatePositions(names);
+        this.playerPos = { x: 1, y: 1 };
+        this.running = true;
+        this.won = false;
+        this.winTime = null;
+      }
+
+      _randomFreePos(exclude) {
+        const rows = this.level.length;
+        const cols = this.level[0].length;
+        while (true) {
+          const x = Math.floor(Math.random() * (cols - 4)) + 2;
+          const y = Math.floor(Math.random() * (rows - 4)) + 2;
+          if (this.level[y][x] === "#") continue;
+          if (exclude.some(p => p.x === x && p.y === y)) continue;
+          return { x, y };
+        }
+      }
+
+      generatePositions(names) {
+        const occupied = [];
+        for (const name of names) {
+          const boxPos = this._randomFreePos(occupied);
+          occupied.push(boxPos);
+          this.boxes.push({ coords: boxPos, name });
+
+          const targetPos = this._randomFreePos(occupied);
+          occupied.push(targetPos);
+          this.targets.push(targetPos);
+        }
+      }
+
+      drawLevel() {
+        for (let y = 0; y < this.level.length; y++) {
+          for (let x = 0; x < this.level[y].length; x++) {
+            ctx.fillStyle = this.level[y][x] === "#" ? BLACK : WHITE;
+            ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+          }
+        }
+      }
+
+      drawBoxes() {
+        for (const box of this.boxes) {
+          const { x, y } = box.coords;
+          ctx.drawImage(images.box, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+
+          // Label
+          ctx.fillStyle = BLACK;
+          ctx.font = "bold 11px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(box.name, x * TILE_SIZE + TILE_SIZE / 2, y * TILE_SIZE + TILE_SIZE / 2);
+        }
+      }
+
+      drawPlayer() {
+        const { x, y } = this.playerPos;
+        const img = images[`player_${this.playerDirection}`];
+        ctx.drawImage(img, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }
+
+      drawTargets() {
+        ctx.strokeStyle = BLUE;
+        ctx.lineWidth = 2;
+        for (const { x, y } of this.targets) {
+          ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
+      }
+
+      movePlayer(dx, dy) {
+        if (this.won) return;
+
+        if      (dx > 0) this.playerDirection = "right";
+        else if (dx < 0) this.playerDirection = "left";
+        else if (dy > 0) this.playerDirection = "down";
+        else if (dy < 0) this.playerDirection = "up";
+
+        const px = this.playerPos.x;
+        const py = this.playerPos.y;
+        const nx = px + dx;
+        const ny = py + dy;
+        const newPos = { x: nx, y: ny };
+
+        if (this.isWall(newPos)) return;
+
+        const box = this.boxes.find(b => b.coords.x === nx && b.coords.y === ny);
+        if (box) {
+          const nbx = nx + dx;
+          const nby = ny + dy;
+          const newBoxPos = { x: nbx, y: nby };
+          if (this.isWall(newBoxPos)) return;
+          if (this.boxes.some(b => b.coords.x === nbx && b.coords.y === nby)) return;
+          box.coords = newBoxPos;
+        }
+
+        this.playerPos = newPos;
+      }
+
+      isWall({ x, y }) {
+        return this.level[y]?.[x] === "#";
+      }
+
+      checkWin() {
+        return this.boxes.every(box =>
+          this.targets.some(t => t.x === box.coords.x && t.y === box.coords.y)
+        );
+      }
+
+      draw() {
+        ctx.fillStyle = WHITE;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+        this.drawLevel();
+        this.drawTargets();
+        this.drawBoxes();
+        this.drawPlayer();
+
+        if (this.won) {
+          ctx.fillStyle = "rgba(255,255,255,0.8)";
+          ctx.fillRect(0, 0, WIDTH, HEIGHT);
+          ctx.fillStyle = BLACK;
+          ctx.font = "bold 72px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("You are a loser!", WIDTH / 2, HEIGHT / 2);
+        }
+      }
+    }
+
+    // ── Main loop ────────────────────────────────────────────────────────────
+    let game;
+
+    function gameLoop() {
+      game.draw();
+
+      if (!game.won && game.checkWin()) {
+        game.won = true;
+        game.winTime = performance.now();
+      }
+
+      if (game.won && performance.now() - game.winTime > 2000) {
+        game.running = false;
+      }
+
+      if (game.running) {
+        requestAnimationFrame(gameLoop);
+      }
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (!game || !game.running) return;
+      switch (e.key) {
+        case "ArrowLeft":  e.preventDefault(); game.movePlayer(-1,  0); break;
+        case "ArrowRight": e.preventDefault(); game.movePlayer( 1,  0); break;
+        case "ArrowUp":    e.preventDefault(); game.movePlayer( 0, -1); break;
+        case "ArrowDown":  e.preventDefault(); game.movePlayer( 0,  1); break;
+      }
+    });
+
+    loadImages(() => {
+      game = new Game();
+      requestAnimationFrame(gameLoop);
+    });
+  </script>
+</body>
+</html>

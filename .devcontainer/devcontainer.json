@@ -1,0 +1,12 @@
+{
+  "name": "Vitya's Life",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "Game",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postStartCommand": "python -m http.server 8080"
+}
